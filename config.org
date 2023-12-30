@@ -1,0 +1,361 @@
+#+PROPERTY:
+
+* config for stumpwm
+
+#+BEGIN_SRC lisp :tangle config
+  (in-package :stumpwm)
+
+  ;; (ql:quickload :stumpwm)
+  (ql:quickload :ttf-fonts)
+  (ql:quickload :desktop-entry)
+  (ql:quickload :cl-ppcre)
+  (ql:quickload :battery-portable)
+  (ql:quickload :slynk)
+  (ql:quickload :sb-cltl2)
+  (ql:quickload :kbd-layouts)
+#+END_SRC
+
+** fonts
+
+those are set globaly
+
+#+begin_src lisp :tangle config
+  (xft:cache-fonts)
+
+  (set-font (make-instance 'xft:font :family "Liberation Mono" :subfamily "Regular" :size 10))
+#+end_src
+
+*** font picker
+
+#+begin_src lisp :tangle config
+  (define-stumpwm-type :font (input prompt)
+    (let* ((family (or (car (select-from-menu (current-screen)
+                                              (clx-truetype:get-font-families)
+                                              "family: "))
+                       ""))
+           (subfamily (or (car (select-from-menu (current-screen)
+                                                 (clx-truetype:get-font-subfamilies family)
+                                                 "subfamily: "))
+                          ""))
+           )
+      (make-instance 'xft:font :family family :subfamily subfamily :size 10)
+      )
+    )
+
+  (defcommand setfontdyn (family) ((:font "family: "))
+    (set-font family))
+#+end_src
+
+** desktop file
+
+handles running of desktop files
+
+#+begin_src lisp :tangle config
+  (desktop-entry:init-entry-list)
+
+  (define-stumpwm-type :desktop (input prompt)
+    (car (select-from-menu (current-screen)
+                           (mapcar (lambda (x) (slot-value x 'desktop-entry::name))
+                                   desktop-entry:*entry-list*)
+                           prompt)))
+
+  (defun desktop-escape-code-lexer (exec)
+    "generates list representatoin of desktop exec property.
+  escapes are lexed as follows:
+  %f - :file
+  %F - :list-of-files
+  %u - :url
+  %U - :list-of-urls"
+    (let ((str-part (cl-ppcre:split "%f|%F|%u|%U" exec))
+          (esc-part (mapcar (lambda (x) (cond ((string= x "%f") :file)
+                                              ((string= x "%F") :list-of-files)
+                                              ((string= x "%u") :url)
+                                              ((string= x "%U") :list-of-urls)
+                                              ))
+                            (cl-ppcre:all-matches-as-strings "%f|%F|%u|%U" exec))))
+      (cond ((> 0 (- (length esc-part) (length str-part)))
+             (append (loop :for str :in str-part
+                           :for esc :in esc-part
+                           :nconc (list str esc)
+                           )
+                     (last str-part)
+                     ))
+            ((= (length esc-part) (length str-part))
+             (loop :for str :in str-part
+                   :for esc :in esc-part
+                   :nconc (list str esc)
+                   ))
+            (t (list str-part)))))
+
+  (defcommand run-desktop (name) ((:desktop "app name: "))
+    (run-shell-command (car (desktop-escape-code-lexer
+                             (loop :for x :in desktop-entry:*entry-list*
+                                   :when (string= (slot-value x 'desktop-entry::name) name)
+                                     :return (slot-value x 'desktop-entry::exec))))))
+#+end_src
+
+** xorg
+
+tries to set xproperties for all stump specific windows
+
+#+BEGIN_SRC lisp :tangle config
+  ;; (in-package :stumpwm)
+  ;; (add-hook *new-mode-line-hook* (lambda (mode-line)
+  ;;                                  (xlib:set-wm-class (mode-line-window mode-line)
+  ;;                                                     "stumpwm" "stumpwm")))
+  ;; (xlib:set-wm-class (screen-message-window (current-screen))
+  ;;                    "stumpwm" "stumpwm")
+  ;; (xlib:set-wm-class (screen-input-window (current-screen))
+  ;;                    "stumpwm" "stumpwm")
+#+END_SRC
+
+** modeline
+
+#+begin_src lisp :tangle config
+  (setq *mode-line-border-width* 8
+        ,*mode-line-border-color* "Grey20"
+        ,*mode-line-timeout* 1)
+
+  (stumpwm:enable-mode-line (stumpwm:current-screen)
+                            (stumpwm:current-head)
+                            t)
+
+  (defun battery-portable::fmt-time (&rest _)
+    nil)
+
+  (register-ml-on-click-id :switch-keyboard-layout
+                           (lambda (&rest _)
+                             (declare (ignore _))
+                             (funcall 'kbd-layouts:switch-keyboard-layout)))
+
+  (setq *screen-mode-line-format* '("[^B"
+                                    (:eval (format-expand *window-formatters* "%c" (current-window)))
+                                    "^b] ^(:on-click :switch-keyboard-layout 0)%L^(:on-click-end) ^> %B %d"))
+#+end_src
+
+** bluetooth
+
+for now it relies on *bluetoothctl* to be installed on your system
+
+#+begin_src lisp :tangle config
+  (define-stumpwm-type :bt-command (input prompt)
+    (loop :with devices = (lambda ()
+                            (mapcar (lambda (x)
+                                      (list
+                                       (coerce (reverse (nth-value 1
+                                                                   (cl-ppcre:scan-to-strings "([0-9A-F:]+) (.+)$"
+                                                                                             x)))
+                                               'list)
+                                       nil))
+                                    (cl-ppcre:split #\newline
+                                                    (string-trim '(#\newline)
+                                                                 (run-shell-command "bluetoothctl devices" t))))
+                            )
+          :for tree = `((("devices" "devices") nil)
+                        (("connect" "connect") ,devices)
+                        (("power" "power") ((("on" "on") nil)
+                                            (("off" "off") nil))))
+          :then (let ((value (cadr (assoc (car path) tree :key #'car :test #'string=))))
+                  (cond ((functionp value) (funcall value))
+                        ((listp value) value)))
+          :until (null tree)
+          :for path = (select-from-menu (current-screen)
+                                        (or (mapcar #'car tree) '("no more"))
+                                        prompt)
+          :collect (cadr path)
+          )
+    )
+
+  (defcommand bluetooth (bt-command) ((:bt-command "pick command: "))
+              (message (run-shell-command (format nil
+                                                  "~{~a~^ ~}"
+                                                  (cons "bluetoothctl" bt-command))
+                                          t)))
+#+end_src
+
+** sly/slynk
+
+repl server for common lisp
+
+#+begin_src lisp :tangle config
+  (defcommand start-slynk () ()
+	      (sb-thread:make-thread (lambda ()
+				       (slynk:create-server :dont-close t))))
+
+  (defcommand stop-slynk () ()
+	      (sb-thread:make-thread (lambda ()
+				      (slynk:stop-server 4005))))
+#+end_src
+
+** sound control
+
+#+begin_src lisp :tangle config
+  (defvar *volume-step* 5
+    "precentage step to move by in `volume-up' and `volume-dowm' commands")
+
+  (defcommand volume-up () ()
+    (run-shell-command (format nil "wpctl set-volume @DEFAULT_SINK@ ~D%+" *volume-step*) nil)
+    (run-shell-command "wpctl get-volume @DEFAULT_SINK@" t))
+
+  (defcommand volume-down () ()
+    (run-shell-command (format nil "wpctl set-volume @DEFAULT_SINK@ ~D%-" *volume-step*) nil)
+    (run-shell-command "wpctl get-volume @DEFAULT_SINK@" t))
+
+  (define-stumpwm-type :precentage (input prompt)
+    (completing-read (current-screen) prompt (loop :for x :from 0 :to 100 :collect (write-to-string x))
+                     ;; :initial-input 0
+                     :require-match t))
+
+  (defcommand volume-set (precentage) ((:precentage "set volume: "))
+    (run-shell-command (format nil "wpctl set-volume @DEFAULT_SINK@ ~D%" precentage nil)))
+#+end_src
+
+** windows/frames
+
+*** looks
+
+gui changes
+
+#+begin_src lisp :tangle config
+  (setq *maxsize-border-width* 0
+        ,*transient-border-width* 0
+        ,*normal-border-width* 0
+        ,*window-border-style* :NONE
+        ,*suppress-frame-indicator* t
+        )
+#+end_src
+
+*** mouse
+
+#+begin_src lisp :tangle config
+  (setq *mouse-focus-policy* :click
+        ,*root-click-focuses-frame* nil
+        )
+#+end_src
+
+*** fullscreen
+
+overrides function handling for _NET_WM_STATE_FULLSCREEN property in X windows
+
+#+begin_src lisp :tangle config
+  (defun update-fullscreen (&rest _)
+    nil)
+#+end_src
+
+** keybindings
+
+#+begin_src lisp :tangle config
+  ;; (run-shell-command "xmodmap -e 'clear mod4'" t) ;; clears windowskey/mod4
+  ;; (run-shell-command "xmodmap -e \'keycode 133 = F20\'" t) ;; assigns F20 to keycode 133
+  ;; (set-prefix-key (kbd "F20")) ;; sets prefix to F20 which was just assigned to windows key
+  (set-prefix-key (kbd "s-SPC")) ;; sets prefix to F20 which was just assigned to windows key
+  (setq *run-xmodmap* nil)
+  (run-shell-command "xmodmap -e 'keycode 135 = Super_L NoSymbol Super_L NoSymbol Super_L'" t)
+
+  (define-key *root-map* (kbd "'") "pull-from-windowlist")
+
+  ;; (defconstant _colon (fdefinition 'colon))
+  ;; (defcommand ncolon (&optional _) (:rest)
+  ;;   (let ((stumpwm:completing-read (lambda (screen prompt completion &key anything &allow-other-keys)
+  ;;                           (car (select-from-menu screen completion prompt)))))
+  ;;     (funcall 'colon _)))
+
+  (defcommand colon (&optional initial-input) (:rest)
+    (let ((cmd (car (select-from-menu (current-screen) (all-commands) ": "))))
+      (unless cmd
+        (throw 'error :abort))
+      (when (plusp (length cmd))
+        (eval-command cmd t))))
+#+end_src
+
+*** top level
+
+#+begin_src lisp :tangle config
+  (loop :for keymap :in '(stumpwm::*tile-group-root-map*
+                          stumpwm::*group-root-map*
+                          stumpwm::*root-map*
+                          stumpwm::*float-group-root-map*
+                          stumpwm::*dynamic-group-root-map*)
+        :do (loop :for binding :in (stumpwm::kmap-bindings (symbol-value keymap))
+                  :when (let ((key (stumpwm::binding-key binding)))
+                          (not (or (stumpwm::key-control key)
+                                   (stumpwm::key-alt key)
+                                   (stumpwm::key-altgr key)
+                                   (stumpwm::key-meta key)
+                                   (stumpwm::key-hyper key)
+                                   (stumpwm::key-super key)
+                                   (= (stumpwm::key-keysym key) #x20)
+                                   )))
+                  :do (let ((key (stumpwm::binding-key binding)))
+                        (define-key
+                            (symbol-value (intern (ppcre::regex-replace "ROOT"
+                                                                        (string keymap)
+                                                                        "TOP")))
+                            (stumpwm::make-key
+                             :keysym (stumpwm::key-keysym key)
+                             :super t)
+                          (stumpwm::binding-command binding)))
+                  ))
+#+end_src
+
+** external programs
+
+initializes all external programs necesary (or not) to run with stump
+
+*** picom
+
+picom is used for highlighting inactive windows
+in case picom is not present in binaries or refusing to run border setting are applied
+
+#+begin_src lisp :tangle config
+  (multiple-value-bind (_ error)
+      (ignore-errors (run-prog "/bin/picom"
+                               :wait nil
+                               :args (list
+                                      "--backend"
+                                      "glx"
+                                      "--window-shader-fg-rule"
+                                      (concatenate 'string 
+                                                   "/home/jepson/.config/stumpwm/inactive.glsl"
+                                                   ":"
+                                                   "!focused"
+                                                   " && "
+                                                   "(" "_NET_WM_WINDOW_TYPE@:a = " "\"" "_NET_WM_WINDOW_TYPE_NORMAL" "\"" ")"
+                                                   ))
+                               )
+                     )
+    (when error
+      (setq *suppress-frame-indicator* nil
+            ,*normal-border-width* 8
+            ,*window-border-style* :thin
+            )
+      (set-focus-color "#268bd2")
+      ))
+#+end_src
+
+* picom
+
+** shaders
+
+*** inactive.glsl
+
+glsl shader for all inactive user windows (non stump)
+
+#+begin_src glsl :tangle inactive.glsl
+  #version 330
+  in vec2 texcoord;             // texture coordinate of the fragment
+
+  uniform sampler2D tex;        // texture of the window
+
+  vec4 default_post_processing(vec4 c);
+
+  float contrast = .5;
+  float brightnesss = .3;
+
+  vec4 window_shader() {
+    vec4 c = texelFetch(tex, ivec2(texcoord), 0);
+    c.rgb = vec3(c.r + c.g + c.b) / 3;
+    c.rgb = c.rgb * contrast + vec3(brightnesss);
+    return default_post_processing(c);
+  }
+#+end_src
