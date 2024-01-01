@@ -99,7 +99,9 @@ escapes are lexed as follows:
 
 (setq *screen-mode-line-format* '("[^B"
                                   (:eval (format-expand *window-formatters* "%c" (current-window)))
-                                  "^b] ^(:on-click :switch-keyboard-layout 0)%L^(:on-click-end) ^> %B %d"))
+                                  "^b] "
+                                  "^(:on-click :switch-keyboard-layout 0)%L^(:on-click-end)"
+                                  "^> %B %d"))
 
 (define-stumpwm-type :bt-command (input prompt)
   (loop :with devices = (lambda ()

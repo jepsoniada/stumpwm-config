@@ -130,7 +130,9 @@ tries to set xproperties for all stump specific windows
 
   (setq *screen-mode-line-format* '("[^B"
                                     (:eval (format-expand *window-formatters* "%c" (current-window)))
-                                    "^b] ^(:on-click :switch-keyboard-layout 0)%L^(:on-click-end) ^> %B %d"))
+                                    "^b] "
+                                    "^(:on-click :switch-keyboard-layout 0)%L^(:on-click-end)"
+                                    "^> %B %d"))
 #+end_src
 
 ** bluetooth
