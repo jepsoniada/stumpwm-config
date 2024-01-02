@@ -244,6 +244,14 @@ overrides function handling for _NET_WM_STATE_FULLSCREEN property in X windows
     nil)
 #+end_src
 
+** languages
+
+options for keyboard layout
+
+#+begin_src lisp :tangle config
+  (kbd-layouts:keyboard-layout-list "pl" "ru" "us" "ara" "kr")
+#+end_src
+
 ** keybindings
 
 #+begin_src lisp :tangle config
