@@ -72,16 +72,7 @@ escapes are lexed as follows:
                                  :when (string= (slot-value x 'desktop-entry::name) name)
                                    :return (slot-value x 'desktop-entry::exec))))))
 
-;; (in-package :stumpwm)
-;; (add-hook *new-mode-line-hook* (lambda (mode-line)
-;;                                  (xlib:set-wm-class (mode-line-window mode-line)
-;;                                                     "stumpwm" "stumpwm")))
-;; (xlib:set-wm-class (screen-message-window (current-screen))
-;;                    "stumpwm" "stumpwm")
-;; (xlib:set-wm-class (screen-input-window (current-screen))
-;;                    "stumpwm" "stumpwm")
-
-(setq *mode-line-border-width* 8
+(setf *mode-line-border-width* 8
       *mode-line-border-color* "Grey20"
       *mode-line-timeout* 1)
 
@@ -138,12 +129,12 @@ escapes are lexed as follows:
                                         t)))
 
 (defcommand start-slynk () ()
-	    (sb-thread:make-thread (lambda ()
-				     (slynk:create-server :dont-close t))))
+            (sb-thread:make-thread (lambda ()
+                                     (slynk:create-server :dont-close t))))
 
 (defcommand stop-slynk () ()
-	    (sb-thread:make-thread (lambda ()
-				    (slynk:stop-server 4005))))
+            (sb-thread:make-thread (lambda ()
+                                     (slynk:stop-server 4005))))
 
 (defvar *volume-step* 5
   "precentage step to move by in `volume-up' and `volume-dowm' commands")
@@ -164,36 +155,46 @@ escapes are lexed as follows:
 (defcommand volume-set (precentage) ((:precentage "set volume: "))
   (run-shell-command (format nil "wpctl set-volume @DEFAULT_SINK@ ~D%" precentage nil)))
 
-(setq *maxsize-border-width* 0
+(setf *maxsize-border-width* 0
       *transient-border-width* 0
       *normal-border-width* 0
       *window-border-style* :NONE
-      *suppress-frame-indicator* t
-      )
+      *suppress-frame-indicator* t)
 
-(setq *mouse-focus-policy* :click
-      *root-click-focuses-frame* nil
-      )
+(setf *mouse-focus-policy* :click
+      *root-click-focuses-frame* nil)
 
 (defun update-fullscreen (&rest _)
   nil)
 
 (kbd-layouts:keyboard-layout-list "pl" "ru" "us" "ara" "kr")
 
-;; (run-shell-command "xmodmap -e 'clear mod4'" t) ;; clears windowskey/mod4
-;; (run-shell-command "xmodmap -e \'keycode 133 = F20\'" t) ;; assigns F20 to keycode 133
-;; (set-prefix-key (kbd "F20")) ;; sets prefix to F20 which was just assigned to windows key
-(set-prefix-key (kbd "s-SPC")) ;; sets prefix to F20 which was just assigned to windows key
-(setq *run-xmodmap* nil)
-(run-shell-command "xmodmap -e 'keycode 135 = Super_L NoSymbol Super_L NoSymbol Super_L'" t)
+(defvar screenshot-path "/home/jepson/Pictures"
+  "Path to directory where screenshots are stored")
 
-(define-key *root-map* (kbd "'") "pull-from-windowlist")
+(defcommand screenshot () ()
+  (stumpwm:run-shell-command (format nil "import -window root ~a/Screenshot-from-~a.png"
+                                     screenshot-path
+                                     (string-trim '(#\Space #\Newline #\Return #\Tab)
+                                                  (stumpwm:run-shell-command "date '+%Y-%m-%d-%H-%M-%S'" t)))))
 
-;; (defconstant _colon (fdefinition 'colon))
-;; (defcommand ncolon (&optional _) (:rest)
-;;   (let ((stumpwm:completing-read (lambda (screen prompt completion &key anything &allow-other-keys)
-;;                           (car (select-from-menu screen completion prompt)))))
-;;     (funcall 'colon _)))
+(defcommand (swap-windows tile-group) () ()
+  "Exchange two windows"
+  (let ((frames (stumpwm::group-frames (current-group))))
+    (case (length frames)
+      (2 (exchange-windows (frame-window (first frames))
+                           (frame-window (second frames))))
+      (otherwise (let* ((f1 (progn (message "Select Window One")
+                                   (choose-frame-by-number (current-group))))
+                        (f2 (progn (message "Select Window Two")
+                                   (choose-frame-by-number (current-group)))))
+                   (when (and f1 f2)
+                     (let ((w1 (frame-window f1))
+                           (w2 (frame-window f2)))
+                       (if (and w1 w2)
+                           (exchange-windows w1 w2)
+                           (throw 'error (format nil "Frame ~A has no window"
+                                                 (or (and w1 f2) (and w2 f1))))))))))))
 
 (defcommand colon (&optional initial-input) (:rest)
   (let ((cmd (car (select-from-menu (current-screen) (all-commands) ": "))))
@@ -201,6 +202,77 @@ escapes are lexed as follows:
       (throw 'error :abort))
     (when (plusp (length cmd))
       (eval-command cmd t))))
+
+(setf *MENU-MAXIMUM-HEIGHT* 20)
+
+;; (run-shell-command "xmodmap -e 'clear mod4'" t) ;; clears windowskey/mod4
+;; (run-shell-command "xmodmap -e \'keycode 133 = F20\'" t) ;; assigns F20 to keycode 133
+;; (set-prefix-key (kbd "F20")) ;; sets prefix to F20 which was just assigned to windows key
+(set-prefix-key (kbd "s-SPC"))
+(setf *run-xmodmap* nil)
+(run-shell-command "xmodmap -e 'keycode 135 = Super_L NoSymbol Super_L NoSymbol Super_L'" t)
+
+(setf *frame-number-map* "asdfghjkl;")
+
+(define-key *top-map* (kbd "SunPrint_Screen") "screenshot")
+
+(setf *root-map* (let ((m (make-sparse-keymap))
+                       (key-to-command-map (list (list (kbd "e") "emacs")
+                                                 (list (kbd "b")   "banish")
+                                                 (list (kbd "!")   "exec")
+                                                 (list (kbd "j")   "run-desktop")
+                                                 (list (kbd "ESC") "abort")
+                                                 (list (kbd ";")   "colon")
+                                                 (list (kbd ":")   "eval")
+                                                 (list (kbd "m")   "lastmsg")
+                                                 (list (kbd "g")   '*groups-map*)
+                                                 (list (kbd "x")   '*exchange-window-map*)
+                                                 (list (kbd "h")   '*help-Map*))))
+                   (loop :for a :in key-to-command-map
+                         :do (define-key m (first a) (second a)))
+                   m))
+
+(setf *group-root-map* (let ((m (make-sparse-keymap))
+                             (key-to-command-map (list (list (kbd "C-u") "next-urgent")
+                                                       (list (kbd "M-n") "next")
+                                                       (list (kbd "M-p") "prev")
+                                                       (list (kbd "o") "other")
+                                                       (list (kbd "RET") "expose")
+                                                       (list (kbd "DEL") "repack-window-numbers")
+                                                       (list (kbd "q") "delete")
+                                                       (list (kbd "Q") "kill")
+                                                       (list (kbd "N") "number")
+                                                       (list (kbd "'") "mark")
+                                                       (list (kbd "F11") "fullscreen")
+                                                       (list (kbd "T") "title")
+                                                       (list (kbd "i") "info")
+                                                       (list (kbd "I") "show-window-properties"))))
+                   (loop :for a :in key-to-command-map
+                         :do (define-key m (first a) (second a)))
+                   m))
+
+(setf *tile-group-root-map* (let ((m (make-sparse-keymap))
+                                  (key-to-command-map (list (list (kbd "n") "pull-hidden-next")
+                                                            (list (kbd "p") "pull-hidden-previous")
+                                                            (list (kbd "P") "place-current-window")
+                                                            (list (kbd "W") "place-existing-windows")
+                                                            (list (kbd "d") "vsplit")
+                                                            (list (kbd "f") "hsplit")
+                                                            (list (kbd "r") "iresize")
+                                                            (list (kbd "w") "fnext")
+                                                            (list (kbd "o") "fnext")
+                                                            (list (kbd "v") "fselect")
+                                                            (list (kbd "z") "fclear")
+                                                            (list (kbd "c") "only")
+                                                            (list (kbd "a") "remove-split")
+                                                            (list (kbd "l") "quit-confirm")
+                                                            (list (kbd "i") "balance-frames")
+                                                            (list (kbd "u") "redisplay")
+                                                            (list (kbd "/") "pull-from-windowlist")
+                                                            (list (kbd "s") "swap-windows"))))
+                              (loop :for a :in key-to-command-map
+                                    :do (define-key m (first a) (second a)))
+                              m))
 
 (loop :for keymap :in '(stumpwm::*tile-group-root-map*
                         stumpwm::*group-root-map*
@@ -245,9 +317,7 @@ escapes are lexed as follows:
                              )
                    )
   (when error
-    (setq *suppress-frame-indicator* nil
+    (setf *suppress-frame-indicator* nil
           *normal-border-width* 8
-          *window-border-style* :thin
-          )
-    (set-focus-color "#268bd2")
-    ))
+          *window-border-style* :thin)
+    (set-focus-color "#268bd2")))
